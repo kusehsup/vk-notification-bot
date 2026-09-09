@@ -1,0 +1,25 @@
+[Unit]
+Description=VK -> Telegram notification bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vkbot
+Group=vkbot
+WorkingDirectory=/opt/vk-notification-bot
+EnvironmentFile=/opt/vk-notification-bot/.env
+ExecStart=/opt/vk-notification-bot/.venv/bin/python -m bot.main
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/vk-notification-bot/data
+
+[Install]
+WantedBy=multi-user.target

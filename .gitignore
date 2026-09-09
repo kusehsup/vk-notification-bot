@@ -1,0 +1,16 @@
+.env
+.env.dev
+.env.*
+!.env.example
+data/
+*.db
+*.db-journal
+__pycache__/
+*.pyc
+.venv/
+venv/
+.idea/
+.vscode/
+*.log
+.pytest_cache/
+.mypy_cache/
