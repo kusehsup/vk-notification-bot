@@ -41,7 +41,9 @@ def load_config() -> Config:
         vkid_poll_interval=int(os.getenv("VKID_POLL_INTERVAL", "60")),
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         flood_policy=FloodPolicy(
-            min_interval=float(os.getenv("VK_API_MIN_INTERVAL", "0.5")),
-            flood_initial=float(os.getenv("VK_FLOOD_COOLDOWN", "600")),
+            min_interval=float(os.getenv("VK_API_MIN_INTERVAL", "0.7")),
+            flood_initial=float(os.getenv("VK_FLOOD_COOLDOWN", "900")),
+            global_trip_seconds=float(os.getenv("VK_GLOBAL_FLOOD_COOLDOWN", "1800")),
+            startup_cooldown=float(os.getenv("VK_STARTUP_COOLDOWN", "0")),
         ),
     )

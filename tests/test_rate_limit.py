@@ -90,7 +90,7 @@ def test_three_tokens_trip_global_pause() -> None:
     assert not ctl.is_cooling("token-ddd")
 
 
-def test_wait_turn_sleeps_cooldown_then_interval() -> None:
+def test_slot_sleeps_cooldown_then_interval() -> None:
     ctl, clock = _controller(min_interval=0.5, flood_initial=3.0)
     ctl.trip("tok", 9)
     slept: list[float] = []
@@ -101,9 +101,39 @@ def test_wait_turn_sleeps_cooldown_then_interval() -> None:
 
     async def run() -> None:
         with patch("asyncio.sleep", fake_sleep):
-            await ctl.wait_turn("tok")
-            await ctl.wait_turn("tok")
+            async with ctl.slot("tok"):
+                pass
+            async with ctl.slot("tok"):
+                pass
 
     asyncio.run(run())
     assert slept[0] == 3.0
     assert slept[1] == 0.5
+
+
+def test_slot_is_exclusive() -> None:
+    ctl, _ = _controller(min_interval=0.0)
+    order: list[str] = []
+
+    async def worker(name: str) -> None:
+        async with ctl.slot("tok"):
+            order.append(f"{name}-in")
+            await asyncio.sleep(0.02)
+            order.append(f"{name}-out")
+
+    async def run() -> None:
+        await asyncio.gather(worker("a"), worker("b"))
+
+    asyncio.run(run())
+    assert order in (
+        ["a-in", "a-out", "b-in", "b-out"],
+        ["b-in", "b-out", "a-in", "a-out"],
+    )
+
+
+def test_two_tokens_trip_global_pause_by_default_threshold() -> None:
+    ctl, _ = _controller(global_trip_threshold=2, global_trip_seconds=50.0)
+    ctl.trip("token-aaa", 9)
+    assert ctl.global_remaining() == 0.0
+    ctl.trip("token-bbb", 9)
+    assert ctl.global_remaining() == 50.0

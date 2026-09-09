@@ -69,7 +69,11 @@ class VKClient:
 
     async def call(self, method: str, **params: Any) -> Any:
         if self._limiter:
-            await self._limiter.wait_turn(self._token)
+            async with self._limiter.slot(self._token):
+                return await self._call_once(method, **params)
+        return await self._call_once(method, **params)
+
+    async def _call_once(self, method: str, **params: Any) -> Any:
         params = {k: v for k, v in params.items() if v is not None}
         params["access_token"] = self._token
         params["v"] = VK_API_VERSION

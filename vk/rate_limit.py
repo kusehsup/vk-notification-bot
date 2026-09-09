@@ -3,7 +3,7 @@
 С 8–9 сентября 2026 VK ужесточил лимиты для сторонних приложений (Kate Mobile и др.):
 error 9 (Flood control) и 29 (Rate limit reached) приходят даже при умеренном RPS.
 Повтор каждые 5–25 секунд только продлевает блокировку, поэтому после этих ошибок
-нужна длинная пауза, общая на все токены с одного IP.
+нужна длинная пауза и не больше одного method-вызова одновременно.
 """
 from __future__ import annotations
 
@@ -12,26 +12,29 @@ import logging
 import random
 import threading
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class FloodPolicy:
-    min_interval: float = 0.5
-    flood_initial: float = 600.0
+    min_interval: float = 0.7
+    flood_initial: float = 900.0
     flood_max: float = 3600.0
-    rate_limit_initial: float = 120.0
+    rate_limit_initial: float = 180.0
     rate_limit_max: float = 900.0
-    global_trip_threshold: int = 3
+    global_trip_threshold: int = 2
     global_trip_window: float = 180.0
-    global_trip_seconds: float = 900.0
+    global_trip_seconds: float = 1800.0
     jitter: float = 0.2
+    startup_cooldown: float = 0.0
 
 
 class VKFloodController:
-    """Общий на процесс лимитер: пауза между method-вызовами + cooldown по токену/IP."""
+    """Общий на процесс лимитер: один in-flight method-вызов + cooldown по токену/IP."""
 
     def __init__(
         self,
@@ -41,11 +44,18 @@ class VKFloodController:
         self.policy = policy or FloodPolicy()
         self._clock = clock
         self._lock = threading.Lock()
+        self._aio_lock: asyncio.Lock | None = None
         self._last_call_at: float = 0.0
         self._token_until: dict[str, float] = {}
         self._token_streak: dict[str, int] = {}
         self._recent_trips: list[tuple[float, str]] = []
         self._global_until: float = 0.0
+        if self.policy.startup_cooldown > 0:
+            self._global_until = self._clock() + self.policy.startup_cooldown
+            logger.info(
+                "VK API startup cooldown %.0fs — no method calls until it elapses",
+                self.policy.startup_cooldown,
+            )
 
     @staticmethod
     def token_key(token: str) -> str:
@@ -68,26 +78,47 @@ class VKFloodController:
         with self._lock:
             return max(0.0, self._global_until - now)
 
-    async def wait_turn(self, token: str) -> None:
-        """Дождаться конца cooldown и минимального интервала между вызовами."""
+    def _ensure_aio_lock(self) -> asyncio.Lock:
+        if self._aio_lock is None:
+            self._aio_lock = asyncio.Lock()
+        return self._aio_lock
+
+    def _next_delay(self, token: str) -> float:
+        key = self.token_key(token)
+        now = self._clock()
+        with self._lock:
+            until = max(self._global_until, self._token_until.get(key, 0.0))
+            cool = until - now
+            if cool > 0:
+                return cool
+            gap = self.policy.min_interval - (now - self._last_call_at)
+            return max(0.0, gap)
+
+    @asynccontextmanager
+    async def slot(self, token: str) -> AsyncIterator[None]:
+        """Эксклюзивный слот на один method-вызов. Держится, пока запрос не завершится."""
         key = self.token_key(token)
         while True:
-            delay = 0.0
+            delay = self._next_delay(token)
+            if delay > 0:
+                if delay >= 5:
+                    logger.info("VK API paused for %.0fs (token=...%s)", delay, key)
+                await asyncio.sleep(delay)
+                continue
+            await self._ensure_aio_lock().acquire()
+            delay = self._next_delay(token)
+            if delay > 0:
+                self._ensure_aio_lock().release()
+                continue
             with self._lock:
-                now = self._clock()
-                until = max(self._global_until, self._token_until.get(key, 0.0))
-                if until > now:
-                    delay = until - now
-                else:
-                    gap = self.policy.min_interval - (now - self._last_call_at)
-                    if gap > 0:
-                        delay = gap
-                    else:
-                        self._last_call_at = now
-                        return
-            if delay >= 5:
-                logger.info("VK API paused for %.0fs (token=...%s)", delay, key)
-            await asyncio.sleep(delay)
+                self._last_call_at = self._clock()
+            break
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._last_call_at = self._clock()
+            self._ensure_aio_lock().release()
 
     def trip(self, token: str, error_code: int, retry_after: float | None = None) -> float:
         """Зафиксировать flood/rate-limit. Возвращает секунды паузы для этого токена."""
