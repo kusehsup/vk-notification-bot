@@ -3,6 +3,7 @@ import logging
 import random
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import aiohttp
@@ -58,6 +59,7 @@ class WorkerManager:
             if i + 1 < len(users):
                 await asyncio.sleep(3)
         logger.info("Started workers for %d users", len(users))
+        await self._maybe_notify_kate_reauth(users)
         await self.start_vkid_watcher()
 
     async def start_vkid_watcher(self) -> None:
@@ -101,6 +103,29 @@ class WorkerManager:
         )
         self._vkid_task = asyncio.create_task(watcher.run(), name="vkid-watcher")
         logger.info("VK ID watcher started for tg_id=%s", self._vkid_owner_tg_id)
+
+    async def _maybe_notify_kate_reauth(self, users: list[User]) -> None:
+        """Один раз просим пользователей перевыпустить токен после бана Kate Mobile."""
+        flag = Path(self._db._path).parent / "kate_reauth_notice_v1"
+        if flag.exists() or not users:
+            return
+        from bot.oauth import REAUTH_TEXT, auth_keyboard
+
+        sent = 0
+        for user in users:
+            try:
+                await self._bot.send_message(
+                    user.tg_id,
+                    REAUTH_TEXT,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=auth_keyboard(),
+                    disable_web_page_preview=True,
+                )
+                sent += 1
+            except TelegramAPIError as e:
+                logger.warning("Failed to send Kate reauth notice to tg_id=%s: %s", user.tg_id, e)
+        flag.write_text("sent\n")
+        logger.info("Sent Kate Mobile reauth notice to %d/%d users", sent, len(users))
 
     async def shutdown(self) -> None:
         async with self._lock:
