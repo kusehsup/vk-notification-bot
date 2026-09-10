@@ -33,20 +33,20 @@ NO_MESSAGES_TEXT = (
 
 FLOOD_TEXT = (
     "❌ ВК ответил Flood control на эту сессию.\n\n"
-    "Подожди и пришли свежий Bearer, выписанный через SOCKS на IP бота (/socks)."
+    "Подожди и пришли свежий Bearer, выписанный через VPN на IP бота (/vpn)."
 )
 
 COOKIE_FILE_TEXT = (
     "Cookie с твоего компьютера <b>не подойдёт</b>: VK привязывает remixsid к IP. "
     "С сервера бота он отвечает unauthorized (другой IP).\n\n"
     "То же самое с Bearer, если скопировать его дома.\n\n"
-    "Зайди на vk.ru <b>через SOCKS5 на IP бота</b> (/socks), войди заново, затем:\n"
+    "Зайди на vk.ru <b>через WireGuard VPN сервера бота</b> (/vpn), войди заново, затем:\n"
     "1. F12 → Network\n"
     "2. Найди <code>api.vk.ru/method/batch.call</code> "
     "(client_id=6287487)\n"
     "3. Скопируй <code>Authorization: Bearer vk1.a....</code>\n"
     "4. Пришли боту эту строку\n\n"
-    "После отправки прокси можно выключить. Это короткий токен сайта."
+    "После отправки VPN можно выключить. Это короткий токен сайта."
 )
 
 COOKIE_BAD_TEXT = (
