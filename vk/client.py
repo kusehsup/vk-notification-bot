@@ -42,6 +42,17 @@ class VKAPIError(Exception):
     def is_flood(self) -> bool:
         return self.code in FLOOD_ERROR_CODES
 
+    @property
+    def is_ip_bound(self) -> bool:
+        msg = self.message.lower()
+        return (
+            "another ip" in msg
+            or "other ip" in msg
+            or "другому ip" in msg
+            or "дан другому" in msg
+            or "given to another" in msg
+        )
+
 
 def parse_vk_error(err: dict) -> VKAPIError:
     retry_after = err.get("retry_after")

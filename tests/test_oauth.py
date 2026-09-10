@@ -8,8 +8,17 @@ def test_auth_keyboard_opens_vk_site() -> None:
     url = kb.inline_keyboard[0][0].url
     assert url in {"https://vk.com", "https://vk.ru"}
     assert "oauth.vk.com" not in START_TEXT
-    assert "remixsid" in START_TEXT
+    assert "another ip" in START_TEXT
+    assert "/socks" in START_TEXT
     assert "VK Admin" not in START_TEXT or "больше не" in START_TEXT.lower() or "закрыл" in START_TEXT
+
+
+def test_socks_owner_text_uses_ssh_dynamic_forward() -> None:
+    from bot.oauth import SOCKS_OWNER_TEXT
+
+    assert "ssh -D 1080" in SOCKS_OWNER_TEXT
+    assert "195.133.25.66" in SOCKS_OWNER_TEXT
+    assert "batch.call" in SOCKS_OWNER_TEXT
 
 
 def test_extract_token_from_blank_redirect() -> None:

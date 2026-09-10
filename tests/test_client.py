@@ -78,6 +78,13 @@ def test_client_bearer_uses_vk_ru_authorization() -> None:
     assert rec.headers.get("Authorization") == "Bearer vk1.a.tok"
 
 
+def test_vkapierror_detects_ip_bound_token() -> None:
+    err = VKAPIError(5, "User authorization failed: access_token was given to another ip address")
+    assert err.is_auth
+    assert err.is_ip_bound
+    assert not VKAPIError(5, "User authorization failed: invalid access_token").is_ip_bound
+
+
 def test_client_success_clears_streak() -> None:
     session = FakeSession({"response": [{"id": 1}]})
     limiter = VKFloodController(

@@ -49,7 +49,9 @@ Kate Mobile, VK Admin и официальный клиент для Android бо
 
 Бот больше не может войти по Cookie `remixsid`: VK привязывает web-сессию к IP браузера, а бот ходит с сервера (`login?role=fast` / unauthorized).
 
-Нужен **Authorization: Bearer vk1.a....** из запроса сайта `api.vk.ru/method/batch.call?client_id=6287487` (F12 → Network). Этот токен короткоживущий; когда протухнет — прислать свежий. Cookie одного недостаточно.
+**Authorization: Bearer** с сайта тоже привязан к IP. Если скопировать его дома, ВК ответит `access_token was given to another ip address`.
+
+Нужно открыть vk.ru через SOCKS5 на IP сервера бота (команда `/socks`: `ssh -D 1080` на VPS), войти заново и скопировать Bearer из `api.vk.ru/method/batch.call?client_id=6287487`. После отправки токена прокси можно выключить. Токен короткоживущий; когда протухнет — снять свежий тем же способом.
 
 ## Команды бота
 
@@ -62,6 +64,7 @@ Kate Mobile, VK Admin и официальный клиент для Android бо
 | `/stop` | Удалить аккаунт из бота |
 | `/help` | Та же справка, что в `/start` |
 | `/auth` | Снова показать инструкцию |
+| `/socks` | Как выписать Bearer через SOCKS на IP бота (`ssh -D`) |
 
 ## Архитектура
 

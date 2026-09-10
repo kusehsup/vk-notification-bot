@@ -7,7 +7,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message
 
 from bot.handlers.token_parse import extract_explicit_token, extract_token
-from bot.oauth import auth_keyboard
+from bot.oauth import IP_BOUND_TEXT, auth_keyboard
 from core.manager import WorkerManager
 from storage.db import Database
 from vk.client import VKAPIError, open_validated_client
@@ -33,19 +33,20 @@ NO_MESSAGES_TEXT = (
 
 FLOOD_TEXT = (
     "❌ ВК ответил Flood control на эту сессию.\n\n"
-    "Подожди и пришли свежий Cookie с vk.com. Не используй старые токены Kate Mobile."
+    "Подожди и пришли свежий Bearer, выписанный через SOCKS на IP бота (/socks)."
 )
 
 COOKIE_FILE_TEXT = (
     "Cookie с твоего компьютера <b>не подойдёт</b>: VK привязывает remixsid к IP. "
     "С сервера бота он отвечает unauthorized (другой IP).\n\n"
-    "Нужен заголовок <b>Authorization</b> того же запроса, что ходит в API сайта:\n"
-    "1. vk.ru/feed → F12 → Network\n"
-    "2. Найди запрос <code>api.vk.ru/method/batch.call</code> "
-    "(или любой <code>api.vk.ru/method/...</code> с <code>client_id=6287487</code>)\n"
+    "То же самое с Bearer, если скопировать его дома.\n\n"
+    "Зайди на vk.ru <b>через SOCKS5 на IP бота</b> (/socks), войди заново, затем:\n"
+    "1. F12 → Network\n"
+    "2. Найди <code>api.vk.ru/method/batch.call</code> "
+    "(client_id=6287487)\n"
     "3. Скопируй <code>Authorization: Bearer vk1.a....</code>\n"
-    "4. Пришли боту эту строку (можно вместе с Cookie)\n\n"
-    "Это короткий токен сайта (~сутки/минуты). Cookie одного недостаточно."
+    "4. Пришли боту эту строку\n\n"
+    "После отправки прокси можно выключить. Это короткий токен сайта."
 )
 
 COOKIE_BAD_TEXT = (
@@ -140,6 +141,14 @@ async def _connect_cookies(
             return
         except VKAPIError as e:
             logger.warning("Cookie session API failed: %s", e)
+            if e.is_ip_bound:
+                await status.edit_text(
+                    IP_BOUND_TEXT,
+                    reply_markup=auth_keyboard(),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+                return
             if e.is_flood:
                 await status.edit_text(
                     FLOOD_TEXT,
@@ -209,6 +218,14 @@ async def _connect_token(
             app_id = _client.vk_app_id
         except VKAPIError as e:
             logger.warning("Token validation failed: %s", e)
+            if e.is_ip_bound:
+                await status.edit_text(
+                    IP_BOUND_TEXT,
+                    reply_markup=auth_keyboard(),
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+                return
             if e.is_flood:
                 await status.edit_text(
                     FLOOD_TEXT,
