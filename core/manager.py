@@ -143,11 +143,18 @@ class WorkerManager:
             with suppress(asyncio.CancelledError, Exception):
                 await self._vkid_task
 
-    async def start_user(self, user: User) -> None:
+    async def start_user(self, user: User, *, allow_token_only: bool = False) -> None:
         async with self._lock:
             if user.tg_id in self._workers:
                 await self._stop_locked(user.tg_id)
 
+            if not user.vk_cookies and not allow_token_only:
+                logger.info(
+                    "Skip workers for tg_id=%s vk_user_id=%s — no vk.com cookies yet",
+                    user.tg_id,
+                    user.vk_user_id,
+                )
+                return
             session = aiohttp.ClientSession()
             tg_id = user.tg_id
             client: VKClient

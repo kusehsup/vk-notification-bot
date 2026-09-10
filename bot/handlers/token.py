@@ -217,7 +217,7 @@ async def _connect_token(
     name = f"{vk_user.get('first_name', '')} {vk_user.get('last_name', '')}".strip()
 
     user = await db.upsert_user(tg_id, token, vk_user_id)
-    await manager.start_user(user)
+    await manager.start_user(user, allow_token_only=True)
     await status.edit_text(
         f"✅ Подключено к аккаунту <b>{name}</b> (id{vk_user_id}).\n\n"
         "Это обычный токен без Cookie — он не обновится сам. "
