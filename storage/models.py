@@ -32,3 +32,6 @@ class User:
     enabled: bool = True
     settings: dict[str, bool] = field(default_factory=lambda: DEFAULT_SETTINGS.copy())
     last_notification_ts: int = 0
+    vk_cookies: str = ""
+    vk_token_expires_at: int = 0
+    vk_app_id: int = 0

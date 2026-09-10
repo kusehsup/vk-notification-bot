@@ -99,9 +99,35 @@ class Database:
             if "stall_alert_sent_at" not in vs_cols:
                 await db.execute("ALTER TABLE vkid_session ADD COLUMN stall_alert_sent_at INTEGER DEFAULT 0")
 
+            # миграция: web-сессия vk.com (cookies + срок токена)
+            cursor = await db.execute("PRAGMA table_info(users)")
+            user_cols = {row["name"] for row in await cursor.fetchall()}
+            if "vk_cookies_encrypted" not in user_cols:
+                await db.execute("ALTER TABLE users ADD COLUMN vk_cookies_encrypted TEXT")
+            if "vk_token_expires_at" not in user_cols:
+                await db.execute(
+                    "ALTER TABLE users ADD COLUMN vk_token_expires_at INTEGER NOT NULL DEFAULT 0"
+                )
+            if "vk_app_id" not in user_cols:
+                await db.execute("ALTER TABLE users ADD COLUMN vk_app_id INTEGER NOT NULL DEFAULT 0")
+
             await db.commit()
 
     def _row_to_user(self, row: aiosqlite.Row) -> User:
+        keys = set(row.keys())
+        cookies_enc = row["vk_cookies_encrypted"] if "vk_cookies_encrypted" in keys else None
+        cookies = ""
+        if cookies_enc:
+            try:
+                cookies = self._cipher.decrypt(cookies_enc)
+            except Exception:
+                cookies = ""
+        expires_at = 0
+        if "vk_token_expires_at" in keys and row["vk_token_expires_at"] is not None:
+            expires_at = int(row["vk_token_expires_at"])
+        app_id = 0
+        if "vk_app_id" in keys and row["vk_app_id"] is not None:
+            app_id = int(row["vk_app_id"])
         return User(
             tg_id=row["tg_id"],
             vk_token=self._cipher.decrypt(row["vk_token_encrypted"]),
@@ -109,28 +135,82 @@ class Database:
             enabled=bool(row["enabled"]),
             settings={**DEFAULT_SETTINGS, **json.loads(row["settings"])},
             last_notification_ts=row["last_notification_ts"],
+            vk_cookies=cookies,
+            vk_token_expires_at=expires_at,
+            vk_app_id=app_id,
         )
 
-    async def upsert_user(self, tg_id: int, vk_token: str, vk_user_id: int) -> User:
+    async def upsert_user(
+        self,
+        tg_id: int,
+        vk_token: str,
+        vk_user_id: int,
+        vk_cookies: str = "",
+        vk_token_expires_at: int = 0,
+        vk_app_id: int = 0,
+    ) -> User:
         encrypted = self._cipher.encrypt(vk_token)
+        cookies_enc = self._cipher.encrypt(vk_cookies) if vk_cookies else ""
         settings_json = json.dumps(DEFAULT_SETTINGS)
         async with aiosqlite.connect(self._path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute(
                 """
-                INSERT INTO users (tg_id, vk_token_encrypted, vk_user_id, enabled, settings)
-                VALUES (?, ?, ?, 1, ?)
+                INSERT INTO users (
+                    tg_id, vk_token_encrypted, vk_user_id, enabled, settings,
+                    vk_cookies_encrypted, vk_token_expires_at, vk_app_id
+                )
+                VALUES (?, ?, ?, 1, ?, ?, ?, ?)
                 ON CONFLICT(tg_id) DO UPDATE SET
                     vk_token_encrypted=excluded.vk_token_encrypted,
                     vk_user_id=excluded.vk_user_id,
-                    enabled=1
+                    enabled=1,
+                    vk_cookies_encrypted=excluded.vk_cookies_encrypted,
+                    vk_token_expires_at=excluded.vk_token_expires_at,
+                    vk_app_id=excluded.vk_app_id
                 """,
-                (tg_id, encrypted, vk_user_id, settings_json),
+                (
+                    tg_id,
+                    encrypted,
+                    vk_user_id,
+                    settings_json,
+                    cookies_enc,
+                    vk_token_expires_at,
+                    vk_app_id,
+                ),
             )
             await db.commit()
             cursor = await db.execute("SELECT * FROM users WHERE tg_id = ?", (tg_id,))
             row = await cursor.fetchone()
         return self._row_to_user(row)
+
+    async def update_vk_session(
+        self,
+        tg_id: int,
+        vk_token: str,
+        vk_cookies: str,
+        vk_token_expires_at: int,
+        vk_app_id: int,
+    ) -> None:
+        async with aiosqlite.connect(self._path) as db:
+            await db.execute(
+                """
+                UPDATE users
+                SET vk_token_encrypted = ?,
+                    vk_cookies_encrypted = ?,
+                    vk_token_expires_at = ?,
+                    vk_app_id = ?
+                WHERE tg_id = ?
+                """,
+                (
+                    self._cipher.encrypt(vk_token),
+                    self._cipher.encrypt(vk_cookies) if vk_cookies else "",
+                    vk_token_expires_at,
+                    vk_app_id,
+                    tg_id,
+                ),
+            )
+            await db.commit()
 
     async def get_user(self, tg_id: int) -> Optional[User]:
         async with aiosqlite.connect(self._path) as db:

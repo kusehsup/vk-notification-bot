@@ -1,5 +1,6 @@
 import logging
-from typing import Any, Optional
+import time
+from typing import Any, Awaitable, Callable, Optional
 
 import aiohttp
 
@@ -48,16 +49,24 @@ def parse_vk_error(err: dict) -> VKAPIError:
     )
 
 
+SessionUpdatedCallback = Callable[[], Awaitable[None] | None]
+
+
 class VKClient:
     def __init__(
         self,
         token: str,
         session: aiohttp.ClientSession,
         limiter: Optional[VKFloodController] = None,
+        on_session_updated: Optional[SessionUpdatedCallback] = None,
     ) -> None:
         self._token = token
         self._session = session
         self._limiter = limiter
+        self._on_session_updated = on_session_updated
+        self._cookies: dict[str, str] = {}
+        self._vk_app_id: int = 0
+        self._token_expires_at: int = 0
 
     @property
     def token(self) -> str:
@@ -66,6 +75,76 @@ class VKClient:
     @property
     def limiter(self) -> Optional[VKFloodController]:
         return self._limiter
+
+    @property
+    def vk_app_id(self) -> int:
+        return self._vk_app_id
+
+    @property
+    def token_expires_at(self) -> int:
+        return self._token_expires_at
+
+    def cookies_header(self) -> str:
+        from vk.web_token import cookies_to_header
+
+        return cookies_to_header(self._cookies)
+
+    def set_web_session(
+        self,
+        cookies: str | dict[str, str],
+        app_id: int = 0,
+        expires_at: int = 0,
+    ) -> None:
+        from vk.web_token import parse_cookie_header
+
+        if isinstance(cookies, str):
+            self._cookies = parse_cookie_header(cookies) if cookies else {}
+        else:
+            self._cookies = dict(cookies)
+        self._vk_app_id = int(app_id or 0)
+        self._token_expires_at = int(expires_at or 0)
+
+    def can_refresh_web_token(self) -> bool:
+        return bool(self._cookies)
+
+    async def refresh_web_token_if_needed(self, force: bool = False) -> bool:
+        """Обновить короткоживущий web-токен по cookies. True — токен сменился."""
+        from vk.web_token import DEFAULT_WEB_APP_ID, fetch_web_token
+
+        if not self._cookies:
+            return False
+        now = int(time.time())
+        if not force and self._token_expires_at and now < self._token_expires_at - 180:
+            return False
+        result = await fetch_web_token(
+            self._session,
+            self._cookies,
+            self._vk_app_id or DEFAULT_WEB_APP_ID,
+            self._token or None,
+        )
+        self._cookies.update(result.cookies)
+        self._token = result.access_token
+        self._token_expires_at = result.expires_at
+        if result.app_id:
+            self._vk_app_id = result.app_id
+        if self._on_session_updated:
+            maybe = self._on_session_updated()
+            if maybe is not None:
+                await maybe
+        return True
+
+    async def try_refresh_after_auth_error(self) -> bool:
+        from vk.web_token import WebTokenError, WebTokenUnauthorized
+
+        if not self._cookies:
+            return False
+        try:
+            return await self.refresh_web_token_if_needed(force=True)
+        except WebTokenUnauthorized:
+            return False
+        except WebTokenError:
+            logger.warning("web_token refresh failed for app_id=%s", self._vk_app_id)
+            return False
 
     async def call(self, method: str, **params: Any) -> Any:
         if self._limiter:

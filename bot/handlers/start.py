@@ -3,7 +3,7 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
-from bot.oauth import START_TEXT, auth_keyboard
+from bot.oauth import ALREADY_CONNECTED_TEXT, START_TEXT, auth_keyboard
 from storage.db import Database
 
 router = Router()
@@ -14,9 +14,7 @@ async def cmd_start(message: Message, db: Database) -> None:
     user = await db.get_user(message.from_user.id)
     if user:
         await message.answer(
-            "Ты уже подключён. /settings, /pause, /resume или /stop.\n\n"
-            "Если уведомления из ВК пропали — VK заблокировал Kate Mobile. "
-            "Сделай /stop и подключись заново кнопкой ниже.",
+            ALREADY_CONNECTED_TEXT,
             reply_markup=auth_keyboard(),
             parse_mode=ParseMode.HTML,
             disable_web_page_preview=True,

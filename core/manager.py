@@ -19,6 +19,7 @@ from vk.notifications import NotificationsPoller
 from vk.rate_limit import FloodPolicy, VKFloodController
 from vk.vkid_client import ActivityItem
 from vk.vkid_watcher import VKIDWatcher
+from vk.web_token import WebTokenUnauthorized
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 class WorkerHandle:
     longpoll_task: asyncio.Task
     notifications_task: asyncio.Task
+    refresh_task: Optional[asyncio.Task]
     session: aiohttp.ClientSession
     client: VKClient
 
@@ -52,6 +54,10 @@ class WorkerManager:
         self._vkid_task: Optional[asyncio.Task] = None
         self._limiter = VKFloodController(policy=flood_policy or FloodPolicy())
 
+    @property
+    def limiter(self) -> VKFloodController:
+        return self._limiter
+
     async def start_all(self) -> None:
         users = await self._db.list_active_users()
         for i, user in enumerate(users):
@@ -59,7 +65,7 @@ class WorkerManager:
             if i + 1 < len(users):
                 await asyncio.sleep(3)
         logger.info("Started workers for %d users", len(users))
-        await self._maybe_notify_kate_reauth(users)
+        await self._maybe_notify_session_reauth(users)
         await self.start_vkid_watcher()
 
     async def start_vkid_watcher(self) -> None:
@@ -104,9 +110,9 @@ class WorkerManager:
         self._vkid_task = asyncio.create_task(watcher.run(), name="vkid-watcher")
         logger.info("VK ID watcher started for tg_id=%s", self._vkid_owner_tg_id)
 
-    async def _maybe_notify_kate_reauth(self, users: list[User]) -> None:
-        """Один раз просим пользователей перевыпустить токен после бана Kate Mobile."""
-        flag = Path(self._db._path).parent / "kate_reauth_notice_v1"
+    async def _maybe_notify_session_reauth(self, users: list[User]) -> None:
+        """Один раз просим cookies vk.com после закрытия VK Admin / Android OAuth."""
+        flag = Path(self._db._path).parent / "kate_reauth_notice_v2"
         if flag.exists() or not users:
             return
         from bot.oauth import REAUTH_TEXT, auth_keyboard
@@ -123,9 +129,9 @@ class WorkerManager:
                 )
                 sent += 1
             except TelegramAPIError as e:
-                logger.warning("Failed to send Kate reauth notice to tg_id=%s: %s", user.tg_id, e)
+                logger.warning("Failed to send session reauth notice to tg_id=%s: %s", user.tg_id, e)
         flag.write_text("sent\n")
-        logger.info("Sent Kate Mobile reauth notice to %d/%d users", sent, len(users))
+        logger.info("Sent vk.com cookie reauth notice to %d/%d users", sent, len(users))
 
     async def shutdown(self) -> None:
         async with self._lock:
@@ -143,10 +149,48 @@ class WorkerManager:
                 await self._stop_locked(user.tg_id)
 
             session = aiohttp.ClientSession()
-            client = VKClient(user.vk_token, session, limiter=self._limiter)
-            self._last_ts_cache[user.tg_id] = user.last_notification_ts
-
             tg_id = user.tg_id
+            client: VKClient
+
+            async def persist_session() -> None:
+                await self._db.update_vk_session(
+                    tg_id,
+                    client.token,
+                    client.cookies_header(),
+                    client.token_expires_at,
+                    client.vk_app_id,
+                )
+
+            client = VKClient(
+                user.vk_token,
+                session,
+                limiter=self._limiter,
+                on_session_updated=persist_session,
+            )
+            if user.vk_cookies:
+                client.set_web_session(
+                    user.vk_cookies,
+                    user.vk_app_id,
+                    user.vk_token_expires_at,
+                )
+                try:
+                    await client.refresh_web_token_if_needed()
+                except WebTokenUnauthorized:
+                    await session.close()
+                    with suppress(TelegramAPIError):
+                        from bot.oauth import REAUTH_TEXT, auth_keyboard
+
+                        await self._bot.send_message(
+                            tg_id,
+                            "⚠️ Сессия vk.com истекла.\n\n" + REAUTH_TEXT,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=auth_keyboard(),
+                            disable_web_page_preview=True,
+                        )
+                    logger.warning("Web session unauthorized for tg_id=%s", tg_id)
+                    return
+
+            self._last_ts_cache[user.tg_id] = user.last_notification_ts
 
             async def on_message(text: str, peer_id: int, vk_msg_id: int) -> None:
                 u = await self._db.get_user(tg_id)
@@ -181,9 +225,41 @@ class WorkerManager:
 
             lp_task = asyncio.create_task(longpoll.run(), name=f"longpoll-{tg_id}")
             np_task = asyncio.create_task(poller.run(), name=f"notif-{tg_id}")
+            refresh_task = None
+            if user.vk_cookies:
+                refresh_task = asyncio.create_task(
+                    self._refresh_loop(tg_id),
+                    name=f"refresh-{tg_id}",
+                )
 
-            self._workers[user.tg_id] = WorkerHandle(lp_task, np_task, session, client)
+            self._workers[user.tg_id] = WorkerHandle(
+                lp_task, np_task, refresh_task, session, client,
+            )
             logger.info("Started workers for tg_id=%s vk_user_id=%s", user.tg_id, user.vk_user_id)
+
+    async def _refresh_loop(self, tg_id: int) -> None:
+        while True:
+            await asyncio.sleep(90)
+            handle = self._workers.get(tg_id)
+            if not handle:
+                return
+            try:
+                await handle.client.refresh_web_token_if_needed()
+            except WebTokenUnauthorized:
+                from bot.oauth import REAUTH_TEXT, auth_keyboard
+
+                with suppress(TelegramAPIError):
+                    await self._bot.send_message(
+                        tg_id,
+                        "⚠️ Сессия vk.com истекла.\n\n" + REAUTH_TEXT,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=auth_keyboard(),
+                        disable_web_page_preview=True,
+                    )
+                await self.stop_user(tg_id)
+                return
+            except Exception:
+                logger.exception("web_token refresh loop crashed tg_id=%s", tg_id)
 
     async def stop_user(self, tg_id: int) -> None:
         async with self._lock:
@@ -193,9 +269,16 @@ class WorkerManager:
         handle = self._workers.pop(tg_id, None)
         if not handle:
             return
-        handle.longpoll_task.cancel()
-        handle.notifications_task.cancel()
-        for t in (handle.longpoll_task, handle.notifications_task):
+        current = asyncio.current_task()
+        tasks = [handle.longpoll_task, handle.notifications_task]
+        if handle.refresh_task:
+            tasks.append(handle.refresh_task)
+        for t in tasks:
+            if t is not current:
+                t.cancel()
+        for t in tasks:
+            if t is current:
+                continue
             try:
                 await t
             except (asyncio.CancelledError, Exception):

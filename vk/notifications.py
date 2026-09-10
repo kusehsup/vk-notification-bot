@@ -43,6 +43,12 @@ class NotificationsPoller:
             except VKAPIError as e:
                 logger.warning("VK API error in notifications (user=%s): %s", self._vk_user_id, e)
                 if e.is_auth:
+                    if await self._client.try_refresh_after_auth_error():
+                        logger.info(
+                            "Refreshed web token after auth error (user=%s)",
+                            self._vk_user_id,
+                        )
+                        continue
                     logger.error("Token invalid for user=%s, stopping notifications", self._vk_user_id)
                     return
                 wait = backoff

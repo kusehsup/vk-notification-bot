@@ -6,6 +6,7 @@ import random
 from typing import Optional
 
 from aiogram import F, Router
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.types import Message, PhotoSize
 
 from bot.sticker_converter import (
@@ -57,7 +58,7 @@ async def on_reply(message: Message, db: Database, manager: WorkerManager) -> No
         return
     target = await db.get_vk_target_for_message(message.chat.id, reply.message_id)
     if not target:
-        return  # это reply не на пересланное ЛС — игнорим
+        raise SkipHandler()
     peer_id, vk_message_id = target
 
     user = await db.get_user(message.from_user.id)

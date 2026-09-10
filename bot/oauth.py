@@ -1,49 +1,19 @@
-"""OAuth-ссылки для пользовательского токена ВК.
+"""Тексты подключения: сессия vk.com вместо мёртвого OAuth.
 
-Kate Mobile (2685278) с сентября 2026 заблокирован: oauth.vk.com отвечает
-«Сервис заблокирован». Для messages + notifications + offline берём живые
-Standalone-приложения с vkhost: VK Admin и официальный VK для Android.
+Kate Mobile, VK Admin и официальный Android-клиент больше не отдают
+messages через oauth.vk.com (blocked / direct auth only).
 """
 from __future__ import annotations
 
-from urllib.parse import urlencode
-
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-VK_ADMIN_APP_ID = 6121396
-VK_ANDROID_APP_ID = 2274003
-KATE_MOBILE_APP_ID = 2685278
-
-# Нужны ЛС, уведомления и постоянный ключ. Остальное — чтобы форматировать
-# имена/группы и отвечать вложениями.
-OAUTH_SCOPE = (
-    "notify,friends,photos,video,docs,notes,pages,status,"
-    "wall,groups,messages,notifications,offline"
-)
-OAUTH_API_VERSION = "5.199"
-OAUTH_REDIRECT = "https://oauth.vk.com/blank.html"
-
-
-def oauth_url(client_id: int) -> str:
-    query = urlencode(
-        {
-            "client_id": client_id,
-            "display": "page",
-            "redirect_uri": OAUTH_REDIRECT,
-            "scope": OAUTH_SCOPE,
-            "response_type": "token",
-            "v": OAUTH_API_VERSION,
-            "revoke": 1,
-        }
-    )
-    return f"https://oauth.vk.com/authorize?{query}"
+VK_SITE = "https://vk.com"
 
 
 def auth_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔑 Войти через VK Admin", url=oauth_url(VK_ADMIN_APP_ID))],
-            [InlineKeyboardButton(text="Запасной вариант: VK для Android", url=oauth_url(VK_ANDROID_APP_ID))],
+            [InlineKeyboardButton(text="Открыть vk.com", url=VK_SITE)],
         ]
     )
 
@@ -54,35 +24,44 @@ START_TEXT = (
     "• Личные сообщения (мгновенно)\n"
     "• Лайки, комментарии, упоминания\n"
     "• Заявки в друзья, репосты, приглашения\n\n"
-    "<b>Чтобы начать, нужен токен ВК.</b> Kate Mobile больше не работает "
-    "(VK его заблокировал) — берём токен через <b>VK Admin</b>.\n\n"
-    "1. Нажми кнопку <b>Войти через VK Admin</b>\n"
-    "2. Разреши доступ (войди в аккаунт ВК, если попросит)\n"
-    "3. Откроется почти пустая страница. В адресной строке будет длинная ссылка "
-    "вида <code>https://oauth.vk.com/blank.html#access_token=...</code>\n"
-    "4. Скопируй значение между <code>access_token=</code> и <code>&amp;</code> "
-    "и пришли его мне следующим сообщением\n\n"
-    "Если VK пишет «сервис заблокирован» — попробуй запасную кнопку "
-    "<b>VK для Android</b>.\n\n"
-    "⚠️ Токен даёт доступ к сообщениям и уведомлениям. "
-    "Храню его зашифрованным и использую только для ретрансляции. "
-    "Отозвать можно в настройках безопасности ВК.\n\n"
+    "<b>Как подключить аккаунт</b>\n"
+    "VK закрыл вход через Kate Mobile, VK Admin и приложение для Android. "
+    "Нужна сессия с сайта vk.com — тот же Cookie, с которым открыт ВК в браузере.\n\n"
+    "1. Открой <a href=\"https://vk.com\">vk.com</a> и войди в аккаунт\n"
+    "2. Нажми F12 → вкладка <b>Network</b> (Сеть) → обнови страницу (F5)\n"
+    "3. Кликни любой запрос к vk.com\n"
+    "4. В <b>Request Headers</b> найди <code>Cookie</code> и скопируй значение целиком "
+    "(должна быть строка с <code>remixsid=</code>)\n"
+    "5. Пришли её мне следующим сообщением. Если Telegram ругается на длину — "
+    "сохрани в <code>cookies.txt</code> и пришли <b>файлом</b>.\n\n"
+    "Не копируй <code>document.cookie</code> из консоли: там нет HttpOnly "
+    "<code>remixsid</code>, без него вход не сработает.\n\n"
+    "⚠️ Cookie — полный вход в аккаунт. Храню зашифрованным, сообщение сразу удаляю, "
+    "использую только чтобы читать уведомления. Отключить: /stop, плюс "
+    "«Выйти на всех устройствах» в настройках VK.\n\n"
     "Команды:\n"
     "/settings — категории уведомлений\n"
     "/pause — пауза\n"
     "/resume — возобновить\n"
-    "/stop — удалить аккаунт и токен\n"
-    "/auth — снова показать кнопки входа"
+    "/stop — удалить аккаунт и сессию\n"
+    "/auth — снова показать инструкцию"
 )
 
 
 REAUTH_TEXT = (
-    "⚠️ <b>Нужен новый токен ВК</b>\n\n"
-    "VK заблокировал Kate Mobile, старые токены больше не читают сообщения "
-    "(ошибка Flood control / «Сервис заблокирован»).\n\n"
-    "1. Нажми <b>Войти через VK Admin</b>\n"
-    "2. Разреши доступ и скопируй <code>access_token=...</code> из адресной строки\n"
-    "3. Пришли сюда <code>/stop</code>, затем токен следующим сообщением\n\n"
-    "Если VK Admin тоже пишет «сервис заблокирован» — запасная кнопка "
-    "<b>VK для Android</b>."
+    "⚠️ <b>Нужна новая сессия vk.com</b>\n\n"
+    "Kate Mobile, VK Admin и официальный Android больше не отдают доступ к сообщениям "
+    "(«application is blocked» / «Unavailable for apps with direct auth»).\n\n"
+    "1. Открой <a href=\"https://vk.com\">vk.com</a> в браузере\n"
+    "2. F12 → Network → обнови страницу\n"
+    "3. Скопируй заголовок <code>Cookie</code> (внутри должен быть <code>remixsid=</code>)\n"
+    "4. Пришли его сюда — <b>/stop не нужен</b>. Если не влезает, пришли .txt файлом.\n\n"
+    "Сообщение с cookie сразу удалю."
+)
+
+
+ALREADY_CONNECTED_TEXT = (
+    "Ты уже подключён. /settings, /pause, /resume или /stop.\n\n"
+    "Если уведомления пропали — пришли свежий <code>Cookie</code> с "
+    "<a href=\"https://vk.com\">vk.com</a> (F12 → Network). /stop для смены сессии не нужен."
 )
