@@ -47,13 +47,11 @@ pytest
 
 Kate Mobile, VK Admin и официальный клиент для Android больше не отдают доступ к сообщениям через `oauth.vk.com` (`application is blocked` / `Unavailable for apps with direct auth`).
 
-Бот берёт сессию **сайта vk.com**: cookie `remixsid` → `login.vk.com/?act=web_token` (приложение 6287487). Токен живёт ~24 минуты и обновляется сам, пока cookie валиден.
+Бот берёт сессию **сайта vk.ru**: полный заголовок Cookie (обязательны `remixsid` и обычно `remixwsid`) → токен приложения 6287487. Одного `remixsid` недостаточно. Токен живёт ~24 минуты и обновляется сам, пока cookie валиден.
 
 1. Открыть [vk.ru](https://vk.ru) в браузере и войти.
-2. F12 → Application (Приложение) → Cookies → `https://vk.ru` → **remixsid**.
-3. Скопировать Value и прислать боту одной строкой: `remixsid=...`
-
-Не копировать весь заголовок Cookie из Network — Telegram обрезает длинные сообщения, и `remixsid` часто оказывается в обрезанном хвосте. Не копировать `document.cookie` из консоли: `remixsid` HttpOnly, его там нет.
+2. F12 → Network → обновить → запрос `/feed` → Request Headers → **Cookie** → Copy value.
+3. Сохранить в `cookies.txt` и прислать боту **файлом** (текстом Telegram обрезает).
 
 ⚠️ Cookie — полный вход в аккаунт. В БД хранится зашифрованным (Fernet). Сообщение с cookie бот сразу удаляет. `/stop` стирает сессию; дополнительно стоит «Выйти на всех устройствах» в настройках VK.
 

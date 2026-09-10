@@ -13,7 +13,7 @@ VK_SITE = "https://vk.ru"
 def auth_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="Открыть vk.com", url=VK_SITE)],
+            [InlineKeyboardButton(text="Открыть vk.ru", url=VK_SITE)],
         ]
     )
 
@@ -25,15 +25,14 @@ START_TEXT = (
     "• Лайки, комментарии, упоминания\n"
     "• Заявки в друзья, репосты, приглашения\n\n"
     "<b>Как подключить аккаунт</b>\n"
-    "Нужна cookie <code>remixsid</code> с сайта vk.ru. Весь заголовок Cookie из Network "
-    "слать не надо — Telegram его обрезает.\n\n"
+    "Нужен <b>полный</b> заголовок Cookie с vk.ru (не одна remixsid — VK её одной не принимает).\n\n"
     "1. Открой <a href=\"https://vk.ru\">vk.ru</a> и войди\n"
-    "2. F12 → вкладка <b>Application</b> (Приложение) → Cookies → <code>https://vk.ru</code>\n"
-    "3. Кликни <code>remixsid</code>, скопируй <b>Value</b>\n"
-    "4. Пришли одной строкой: <code>remixsid=значение</code>\n\n"
-    "Не копируй <code>document.cookie</code> из консоли: там нет HttpOnly "
-    "<code>remixsid</code>.\n\n"
-    "⚠️ remixsid — полный вход в аккаунт. Храню зашифрованным, сообщение сразу удаляю. "
+    "2. F12 → <b>Network</b> → обнови страницу → кликни запрос <code>/feed</code>\n"
+    "3. Request Headers → <code>Cookie</code> → Copy value\n"
+    "4. Сохрани в <code>cookies.txt</code> и пришли <b>файлом</b>\n\n"
+    "Внутри должны быть <code>remixsid</code> и <code>remixwsid</code>. "
+    "Не копируй <code>document.cookie</code> из консоли.\n\n"
+    "⚠️ Это полный вход в аккаунт. Храню зашифрованным, файл/сообщение сразу удаляю. "
     "Отключить: /stop, плюс «Выйти на всех устройствах» в настройках VK.\n\n"
     "Команды:\n"
     "/settings — категории уведомлений\n"
@@ -45,16 +44,14 @@ START_TEXT = (
 
 
 REAUTH_TEXT = (
-    "⚠️ <b>Нужна cookie remixsid</b>\n\n"
-    "1. Открой <a href=\"https://vk.ru\">vk.ru</a>\n"
-    "2. F12 → Application → Cookies → vk.ru → <code>remixsid</code>\n"
-    "3. Скопируй Value и пришли: <code>remixsid=...</code>\n"
-    "4. /stop не нужен. Не присылай весь заголовок Cookie из Network."
+    "⚠️ <b>Нужна сессия vk.ru</b>\n\n"
+    "Одного remixsid мало. Пришли <b>файлом</b> полный Cookie с vk.ru/feed "
+    "(F12 → Network → Cookie), внутри должны быть remixsid и remixwsid. /stop не нужен."
 )
 
 
 ALREADY_CONNECTED_TEXT = (
     "Ты уже подключён. /settings, /pause, /resume или /stop.\n\n"
-    "Если уведомления пропали — пришли свежий <code>remixsid=...</code> "
-    "(F12 → Application → Cookies на vk.ru). /stop не нужен."
+    "Если уведомления пропали — пришли <code>cookies.txt</code> с полным Cookie "
+    "с vk.ru/feed. /stop не нужен."
 )

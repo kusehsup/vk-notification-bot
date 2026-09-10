@@ -109,6 +109,31 @@ def test_fetch_web_token_unauthorized() -> None:
     asyncio.run(run())
 
 
+def test_exchange_uses_remixwsid_before_web_token() -> None:
+    def handler(url: str, kwargs: dict[str, Any]) -> FakeResponse:
+        if "act=web_token" in url:
+            raise AssertionError("web_token should not be called when remixwsid works")
+        token = kwargs["data"]["access_token"]
+        assert token == "vk1.a.WSIDTOKEN"
+        if url.endswith("users.get"):
+            return FakeResponse({"response": [{"id": 9, "first_name": "W", "last_name": "S"}]})
+        if url.endswith("messages.getLongPollServer"):
+            return FakeResponse({"response": {"server": "x", "key": "k", "ts": 1}})
+        raise AssertionError(url)
+
+    session = FakeSession(handler)
+
+    async def run() -> None:
+        web = await exchange_cookies_for_api(  # type: ignore[arg-type]
+            session,
+            {"remixsid": "sid", "remixwsid": "vk1.a.WSIDTOKEN"},
+        )
+        assert web.access_token == "vk1.a.WSIDTOKEN"
+        assert web.users[0]["id"] == 9
+
+    asyncio.run(run())
+
+
 def test_exchange_skips_app_without_messages() -> None:
     state = {"web": 0}
 

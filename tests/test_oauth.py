@@ -79,7 +79,7 @@ def test_parse_wrapped_remixsid() -> None:
     parsed = parse_cookie_blob(raw)
     assert parsed is not None
     assert parsed["remixsid"].startswith("1_abcDEF")
-    assert "remixhttphash" not in parsed
+    assert parsed.get("remixhttphash", "").replace("\n", "").startswith("vk1.a")
 
 
 def test_parse_bare_remixsid_value() -> None:

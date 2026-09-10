@@ -27,8 +27,8 @@ MAX_COOKIE_FILE_BYTES = 100_000
 
 NO_MESSAGES_TEXT = (
     "❌ У этой сессии нет доступа к сообщениям ВК.\n\n"
-    "Пришли <b>полный</b> заголовок Cookie с открытого vk.com "
-    "(F12 → Network → Cookie, внутри должен быть <code>remixsid=</code>)."
+    "Пришли <b>полный</b> заголовок Cookie с открытого vk.ru "
+    "(F12 → Network → Cookie файлом, внутри remixsid и remixwsid)."
 )
 
 FLOOD_TEXT = (
@@ -36,22 +36,28 @@ FLOOD_TEXT = (
     "Подожди и пришли свежий Cookie с vk.com. Не используй старые токены Kate Mobile."
 )
 
+COOKIE_FILE_TEXT = (
+    "1. Открой <a href=\"https://vk.ru\">vk.ru</a> (лента, ты залогинен)\n"
+    "2. F12 → <b>Network</b> → обнови страницу → кликни запрос <code>vk.ru/feed</code>\n"
+    "3. Request Headers → <code>Cookie</code> → Copy value\n"
+    "4. Вставь в блокнот, сохрани как <code>cookies.txt</code> и <b>пришли файлом</b> "
+    "(не текстом — Telegram режет длинные сообщения)\n\n"
+    "В файле должны быть и <code>remixsid=</code>, и <code>remixwsid=</code>. "
+    "Одного remixsid мало: VK его без остальных cookie не принимает."
+)
+
 COOKIE_BAD_TEXT = (
-    "Не похоже на сессию vk.com.\n\n"
-    "Пришли одну строку <code>remixsid=...</code> "
-    "(F12 → Application → Cookies → vk.ru → remixsid → Value).\n"
-    "Весь заголовок Cookie из Network лучше не слать: Telegram его режет."
+    "Не похоже на сессию vk.ru.\n\n" + COOKIE_FILE_TEXT
 )
 
 COOKIE_REJECTED_TEXT = (
-    "❌ VK не принял <code>remixsid</code>.\n\n"
-    "Не копируй весь заголовок Cookie из Network — он слишком длинный, "
-    "и <code>remixsid</code> часто обрезается.\n\n"
-    "Сделай так:\n"
-    "1. F12 → вкладка <b>Application</b> (Приложение) → Cookies → <code>https://vk.ru</code>\n"
-    "2. Найди cookie <code>remixsid</code>, скопируй <b>Value</b>\n"
-    "3. Пришли мне одной строкой: <code>remixsid=значение</code>\n\n"
-    "Если копируешь из Network — только пару <code>remixsid=...</code>, не весь Cookie."
+    "❌ Одного <code>remixsid</code> недостаточно — VK отвечает unauthorized.\n\n"
+    + COOKIE_FILE_TEXT
+)
+
+COOKIE_TOO_LONG_TEXT = (
+    "Это весь заголовок Cookie, но текстом Telegram его обрезает.\n\n"
+    "Сохрани Cookie в <code>cookies.txt</code> и пришли <b>файлом</b>."
 )
 
 
@@ -77,13 +83,10 @@ async def receive_session(message: Message, db: Database, manager: WorkerManager
     raw = await _payload_text(message)
     cookies = parse_cookie_blob(raw)
     token = extract_explicit_token(raw) if cookies else extract_token(raw)
-    sid = (cookies or {}).get("remixsid") or ""
 
-    if len(raw) >= 3900 and not message.document and len(sid) < 50:
+    if len(raw) >= 3900 and not message.document:
         await message.answer(
-            "Это похоже на весь заголовок Cookie — Telegram обрезает такие сообщения.\n"
-            "Пришли только <code>remixsid=значение</code> "
-            "(F12 → Application → Cookies → remixsid).",
+            COOKIE_TOO_LONG_TEXT,
             reply_markup=auth_keyboard(),
             parse_mode=ParseMode.HTML,
         )

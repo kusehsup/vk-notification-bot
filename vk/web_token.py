@@ -44,9 +44,22 @@ DEFAULT_UA = (
     "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
 
-# Остальное (remixhttphash и т.п.) огромное, Telegram режет, а перевод строки в значении
-# ломает заголовок Cookie — login.vk.com тогда отвечает unauthorized.
-SESSION_COOKIE_NAMES = {"remixsid", "remixnsid", "p", "remixstid", "remixstlid", "remixlhk"}
+# Нужны не только remixsid: login.vk.ru без remixuas/remixwsid отвечает unauthorized.
+# remixscreen_* и _ym_* не нужны.
+SESSION_COOKIE_NAMES = {
+    "remixsid",
+    "remixnsid",
+    "remixwsid",
+    "remixhttphash",
+    "remixuas",
+    "remixuacc",
+    "remixstid",
+    "remixstlid",
+    "remixstid2",
+    "remixlhk",
+    "p",
+    "httoken",
+}
 
 NO_MESSAGES_CODES = {7, 15, 20, 21, 27, 28}
 
@@ -101,9 +114,25 @@ def slim_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
         clean = re.sub(r"\s+", "", value or "")
         if not name or not clean:
             continue
-        if name.lower().startswith("remixsid") or name.lower() in SESSION_COOKIE_NAMES:
+        lname = name.lower()
+        if lname.startswith(("_ym", "ymex", "_ga", "_gid")):
+            continue
+        if lname.startswith("remixscreen"):
+            continue
+        if lname.startswith("remix") or lname in SESSION_COOKIE_NAMES:
             out[name] = clean
     return out
+
+
+def cookie_vk_tokens(cookies: dict[str, str]) -> list[str]:
+    """vk1.a токены, которые VK кладёт в cookie (remixwsid / remixhttphash)."""
+    found: list[str] = []
+    lower = {k.lower(): v for k, v in cookies.items()}
+    for key in ("remixwsid", "remixhttphash"):
+        value = lower.get(key, "")
+        if value.startswith("vk1.") and value not in found:
+            found.append(value)
+    return found
 
 
 def parse_cookie_header(cookie_header: str) -> dict[str, str]:
@@ -391,13 +420,42 @@ async def exchange_cookies_for_api(
     """Получить токен, у которого работают users.get и messages.getLongPollServer."""
     last_err: Optional[Exception] = None
     merged = slim_session_cookies(cookies)
-    token_hint = extra_token
+
+    token_candidates: list[str] = []
+    if extra_token:
+        token_candidates.append(extra_token)
+    for tok in cookie_vk_tokens(merged):
+        if tok not in token_candidates:
+            token_candidates.append(tok)
+
+    for tok in token_candidates:
+        try:
+            session = await _validated_session(
+                http,
+                tok,
+                merged,
+                int(time.time()) + 20 * 60,
+                DEFAULT_WEB_APP_ID,
+                limiter,
+            )
+            logger.info(
+                "Accepted cookie/bearer token (keys=%s)",
+                ",".join(sorted(merged)),
+            )
+            return session
+        except VKAPIError as e:
+            last_err = e
+            if e.is_flood:
+                raise
+            logger.info("cookie token rejected by API: %s", e)
+
+    token_hint = extra_token or (token_candidates[0] if token_candidates else None)
     for app_id in WEB_APP_CANDIDATES:
         try:
             result = await fetch_web_token(http, merged, app_id, token_hint)
         except WebTokenUnauthorized as e:
             last_err = e
-            logger.info("web_token app_id=%s unauthorized — remixsid rejected", app_id)
+            logger.info("web_token app_id=%s unauthorized (keys=%s)", app_id, ",".join(sorted(merged)))
             break
         except WebTokenError as e:
             logger.info("web_token app_id=%s: %s", app_id, e)
@@ -415,20 +473,6 @@ async def exchange_cookies_for_api(
                 raise
             logger.info("app_id=%s token rejected by API: %s", app_id, e)
             continue
-
-    if extra_token:
-        try:
-            return await _validated_session(
-                http,
-                extra_token,
-                merged,
-                int(time.time()) + 20 * 60,
-                DEFAULT_WEB_APP_ID,
-                limiter,
-            )
-        except VKAPIError as e:
-            last_err = e
-            logger.info("Bearer/access_token fallback failed: %s", e)
 
     if isinstance(last_err, WebTokenUnauthorized):
         raise last_err
