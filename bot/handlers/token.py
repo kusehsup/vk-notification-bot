@@ -10,7 +10,7 @@ from bot.handlers.token_parse import extract_explicit_token, extract_token
 from bot.oauth import auth_keyboard
 from core.manager import WorkerManager
 from storage.db import Database
-from vk.client import VKAPIError, VKClient
+from vk.client import VKAPIError, open_validated_client
 from vk.web_token import (
     WebTokenError,
     WebTokenUnauthorized,
@@ -26,9 +26,9 @@ router = Router()
 MAX_COOKIE_FILE_BYTES = 100_000
 
 NO_MESSAGES_TEXT = (
-    "❌ У этой сессии нет доступа к сообщениям ВК.\n\n"
-    "Пришли <b>полный</b> заголовок Cookie с открытого vk.ru "
-    "(F12 → Network → Cookie файлом, внутри remixsid и remixwsid)."
+    "❌ У токена нет доступа к сообщениям ВК (или это не токен сайта).\n\n"
+    "Нужен <code>Authorization: Bearer vk1.a....</code> из запроса "
+    "<code>api.vk.ru/method/batch.call</code>, не Cookie и не remixnsid."
 )
 
 FLOOD_TEXT = (
@@ -37,13 +37,15 @@ FLOOD_TEXT = (
 )
 
 COOKIE_FILE_TEXT = (
-    "1. Открой <a href=\"https://vk.ru\">vk.ru</a> (лента, ты залогинен)\n"
-    "2. F12 → <b>Network</b> → обнови страницу → кликни запрос <code>vk.ru/feed</code>\n"
-    "3. Request Headers → <code>Cookie</code> → Copy value\n"
-    "4. Вставь в блокнот, сохрани как <code>cookies.txt</code> и <b>пришли файлом</b> "
-    "(не текстом — Telegram режет длинные сообщения)\n\n"
-    "В файле должны быть и <code>remixsid=</code>, и <code>remixwsid=</code>. "
-    "Одного remixsid мало: VK его без остальных cookie не принимает."
+    "Cookie с твоего компьютера <b>не подойдёт</b>: VK привязывает remixsid к IP. "
+    "С сервера бота он отвечает unauthorized (другой IP).\n\n"
+    "Нужен заголовок <b>Authorization</b> того же запроса, что ходит в API сайта:\n"
+    "1. vk.ru/feed → F12 → Network\n"
+    "2. Найди запрос <code>api.vk.ru/method/batch.call</code> "
+    "(или любой <code>api.vk.ru/method/...</code> с <code>client_id=6287487</code>)\n"
+    "3. Скопируй <code>Authorization: Bearer vk1.a....</code>\n"
+    "4. Пришли боту эту строку (можно вместе с Cookie)\n\n"
+    "Это короткий токен сайта (~сутки/минуты). Cookie одного недостаточно."
 )
 
 COOKIE_BAD_TEXT = (
@@ -51,8 +53,8 @@ COOKIE_BAD_TEXT = (
 )
 
 COOKIE_REJECTED_TEXT = (
-    "❌ Одного <code>remixsid</code> недостаточно — VK отвечает unauthorized.\n\n"
-    + COOKIE_FILE_TEXT
+    "❌ Cookie с vk.ru бот принять не может — сессия привязана к твоему IP, "
+    "а бот ходит в ВК с другого.\n\n" + COOKIE_FILE_TEXT
 )
 
 COOKIE_TOO_LONG_TEXT = (
@@ -202,10 +204,9 @@ async def _connect_token(
     manager: WorkerManager,
 ) -> None:
     async with aiohttp.ClientSession() as session:
-        client = VKClient(token, session, limiter=manager.limiter)
         try:
-            users = await client.users_get()
-            await client.messages_get_long_poll_server()
+            _client, users = await open_validated_client(token, session, manager.limiter)
+            app_id = _client.vk_app_id
         except VKAPIError as e:
             logger.warning("Token validation failed: %s", e)
             if e.is_flood:
@@ -215,7 +216,7 @@ async def _connect_token(
                     parse_mode=ParseMode.HTML,
                 )
                 return
-            if e.code in (7, 15, 20, 21, 27, 28):
+            if e.code in (7, 15, 20, 21, 27, 28, 38):
                 await status.edit_text(
                     NO_MESSAGES_TEXT,
                     reply_markup=auth_keyboard(),
@@ -240,12 +241,14 @@ async def _connect_token(
     vk_user_id = vk_user["id"]
     name = f"{vk_user.get('first_name', '')} {vk_user.get('last_name', '')}".strip()
 
-    user = await db.upsert_user(tg_id, token, vk_user_id)
+    user = await db.upsert_user(
+        tg_id, token, vk_user_id, vk_app_id=app_id,
+    )
     await manager.start_user(user, allow_token_only=True)
     await status.edit_text(
         f"✅ Подключено к аккаунту <b>{name}</b> (id{vk_user_id}).\n\n"
-        "Это обычный токен без Cookie — он не обновится сам. "
-        "Надёжнее прислать Cookie с vk.com.\n"
+        "Это токен сайта ВК. Если уведомления пропадут — пришли свежий "
+        "<code>Authorization: Bearer vk1.a....</code> из Network на batch.call.\n"
         "Настроить категории: /settings",
         parse_mode=ParseMode.HTML,
     )

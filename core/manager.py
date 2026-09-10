@@ -173,6 +173,7 @@ class WorkerManager:
                 session,
                 limiter=self._limiter,
                 on_session_updated=persist_session,
+                use_bearer=user.vk_app_id == 6287487,
             )
             if user.vk_cookies:
                 client.set_web_session(
@@ -183,19 +184,12 @@ class WorkerManager:
                 try:
                     await client.refresh_web_token_if_needed()
                 except WebTokenUnauthorized:
-                    await session.close()
-                    with suppress(TelegramAPIError):
-                        from bot.oauth import REAUTH_TEXT, auth_keyboard
-
-                        await self._bot.send_message(
-                            tg_id,
-                            "⚠️ Сессия vk.com истекла.\n\n" + REAUTH_TEXT,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=auth_keyboard(),
-                            disable_web_page_preview=True,
-                        )
-                    logger.warning("Web session unauthorized for tg_id=%s", tg_id)
-                    return
+                    # remixsid с домашнего IP сервер бота не принимает (role=fast).
+                    # Если access_token уже есть — крутим его, не глушим воркеры.
+                    logger.info(
+                        "web_token refresh unauthorized at start tg_id=%s — keeping existing token",
+                        tg_id,
+                    )
 
             self._last_ts_cache[user.tg_id] = user.last_notification_ts
 

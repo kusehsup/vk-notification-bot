@@ -11,7 +11,7 @@ class FakeResponse:
     def __init__(self, payload: dict[str, Any]) -> None:
         self._payload = payload
 
-    async def json(self) -> dict[str, Any]:
+    async def json(self, content_type: Any = None) -> dict[str, Any]:
         return self._payload
 
     async def __aenter__(self) -> FakeResponse:
@@ -50,6 +50,32 @@ def test_client_trips_limiter_on_flood() -> None:
     assert session.calls == 1
     assert limiter.is_cooling("secret-token")
     assert limiter.remaining("secret-token") >= 14
+
+
+def test_client_bearer_uses_vk_ru_authorization() -> None:
+    class Rec:
+        def __init__(self) -> None:
+            self.url = ""
+            self.headers: dict[str, str] = {}
+
+    rec = Rec()
+
+    class Session:
+        def post(self, url: str, **kwargs: Any) -> FakeResponse:
+            rec.url = url
+            rec.headers = kwargs.get("headers") or {}
+            return FakeResponse({"response": [{"id": 1}]})
+
+    client = VKClient("vk1.a.tok", Session(), use_bearer=True)  # type: ignore[arg-type]
+
+    async def run() -> None:
+        result = await client.users_get()
+        assert result == [{"id": 1}]
+
+    asyncio.run(run())
+    assert rec.url.startswith("https://api.vk.ru/method/users.get")
+    assert "client_id=6287487" in rec.url
+    assert rec.headers.get("Authorization") == "Bearer vk1.a.tok"
 
 
 def test_client_success_clears_streak() -> None:

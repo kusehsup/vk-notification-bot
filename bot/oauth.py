@@ -25,15 +25,16 @@ START_TEXT = (
     "• Лайки, комментарии, упоминания\n"
     "• Заявки в друзья, репосты, приглашения\n\n"
     "<b>Как подключить аккаунт</b>\n"
-    "Нужен <b>полный</b> заголовок Cookie с vk.ru (не одна remixsid — VK её одной не принимает).\n\n"
-    "1. Открой <a href=\"https://vk.ru\">vk.ru</a> и войди\n"
-    "2. F12 → <b>Network</b> → обнови страницу → кликни запрос <code>/feed</code>\n"
-    "3. Request Headers → <code>Cookie</code> → Copy value\n"
-    "4. Сохрани в <code>cookies.txt</code> и пришли <b>файлом</b>\n\n"
-    "Внутри должны быть <code>remixsid</code> и <code>remixwsid</code>. "
-    "Не копируй <code>document.cookie</code> из консоли.\n\n"
-    "⚠️ Это полный вход в аккаунт. Храню зашифрованным, файл/сообщение сразу удаляю. "
-    "Отключить: /stop, плюс «Выйти на всех устройствах» в настройках VK.\n\n"
+    "Cookie remixsid с сайта <b>нельзя</b> использовать с сервера бота: VK привязывает "
+    "их к твоему IP.\n\n"
+    "Нужен токен из заголовка Authorization:\n"
+    "1. Открой <a href=\"https://vk.ru\">vk.ru</a>, F12 → Network, обнови ленту\n"
+    "2. Найди запрос <code>api.vk.ru/method/batch.call</code> "
+    "(client_id=6287487)\n"
+    "3. Скопируй <code>Authorization: Bearer vk1.a....</code> и пришли мне\n\n"
+    "Не присылай один Cookie — бот его отклонит.\n\n"
+    "⚠️ Токен даёт доступ к сообщениям. Храню зашифрованным, сообщение удаляю. "
+    "Отключить: /stop.\n\n"
     "Команды:\n"
     "/settings — категории уведомлений\n"
     "/pause — пауза\n"
@@ -44,14 +45,15 @@ START_TEXT = (
 
 
 REAUTH_TEXT = (
-    "⚠️ <b>Нужна сессия vk.ru</b>\n\n"
-    "Одного remixsid мало. Пришли <b>файлом</b> полный Cookie с vk.ru/feed "
-    "(F12 → Network → Cookie), внутри должны быть remixsid и remixwsid. /stop не нужен."
+    "⚠️ <b>Нужен токен сайта ВК</b>\n\n"
+    "Cookie с твоего IP бот использовать не может.\n"
+    "F12 → Network → <code>api.vk.ru/method/batch.call</code> → "
+    "<code>Authorization: Bearer vk1.a....</code> — пришли эту строку. /stop не нужен."
 )
 
 
 ALREADY_CONNECTED_TEXT = (
     "Ты уже подключён. /settings, /pause, /resume или /stop.\n\n"
-    "Если уведомления пропали — пришли <code>cookies.txt</code> с полным Cookie "
-    "с vk.ru/feed. /stop не нужен."
+    "Если уведомления пропали — пришли свежий <code>Authorization: Bearer vk1.a....</code> "
+    "из Network на batch.call. /stop не нужен."
 )

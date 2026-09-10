@@ -151,10 +151,14 @@ def test_exchange_skips_app_without_messages() -> None:
                     },
                 }
             )
-        if url.endswith("users.get"):
+        if "users.get" in url:
             return FakeResponse({"response": [{"id": 7, "first_name": "A", "last_name": "B"}]})
-        if url.endswith("messages.getLongPollServer"):
-            token = kwargs["data"]["access_token"]
+        if "messages.getLongPollServer" in url:
+            data = kwargs.get("data") or {}
+            token = data.get("access_token")
+            if not token:
+                auth = (kwargs.get("headers") or {}).get("Authorization", "")
+                token = auth.replace("Bearer ", "")
             if token == "tok-6287487":
                 return FakeResponse(
                     {"error": {"error_code": 15, "error_msg": "Access denied"}}

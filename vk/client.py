@@ -9,7 +9,14 @@ from vk.rate_limit import VKFloodController
 logger = logging.getLogger(__name__)
 
 VK_API_URL = "https://api.vk.com/method/"
+VK_API_URL_RU = "https://api.vk.ru/method/"
 VK_API_VERSION = "5.199"
+VK_WEB_API_VERSION = "5.285"
+VK_WEB_APP_ID = 6287487
+WEB_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+)
 
 AUTH_ERROR_CODES = {5, 17}
 FLOOD_ERROR_CODES = {6, 9, 29}
@@ -59,14 +66,16 @@ class VKClient:
         session: aiohttp.ClientSession,
         limiter: Optional[VKFloodController] = None,
         on_session_updated: Optional[SessionUpdatedCallback] = None,
+        use_bearer: bool = False,
     ) -> None:
         self._token = token
         self._session = session
         self._limiter = limiter
         self._on_session_updated = on_session_updated
         self._cookies: dict[str, str] = {}
-        self._vk_app_id: int = 0
+        self._vk_app_id: int = VK_WEB_APP_ID if use_bearer else 0
         self._token_expires_at: int = 0
+        self._use_bearer = use_bearer
 
     @property
     def token(self) -> str:
@@ -94,6 +103,7 @@ class VKClient:
         cookies: str | dict[str, str],
         app_id: int = 0,
         expires_at: int = 0,
+        use_bearer: bool | None = None,
     ) -> None:
         from vk.web_token import parse_cookie_header
 
@@ -103,6 +113,10 @@ class VKClient:
             self._cookies = dict(cookies)
         self._vk_app_id = int(app_id or 0)
         self._token_expires_at = int(expires_at or 0)
+        if use_bearer is not None:
+            self._use_bearer = use_bearer
+        elif self._vk_app_id == VK_WEB_APP_ID:
+            self._use_bearer = True
 
     def can_refresh_web_token(self) -> bool:
         return bool(self._cookies)
@@ -154,11 +168,25 @@ class VKClient:
 
     async def _call_once(self, method: str, **params: Any) -> Any:
         params = {k: v for k, v in params.items() if v is not None}
-        params["access_token"] = self._token
-        params["v"] = VK_API_VERSION
-        url = VK_API_URL + method
-        async with self._session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-            data = await resp.json()
+        if self._use_bearer:
+            headers = {
+                "Authorization": f"Bearer {self._token}",
+                "Origin": "https://vk.ru",
+                "Referer": "https://vk.ru/",
+                "User-Agent": WEB_UA,
+            }
+            app_id = self._vk_app_id or VK_WEB_APP_ID
+            url = f"{VK_API_URL_RU}{method}?v={VK_WEB_API_VERSION}&client_id={app_id}"
+            async with self._session.post(
+                url, data=params, headers=headers, timeout=aiohttp.ClientTimeout(total=30)
+            ) as resp:
+                data = await resp.json(content_type=None)
+        else:
+            params["access_token"] = self._token
+            params["v"] = VK_API_VERSION
+            url = VK_API_URL + method
+            async with self._session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                data = await resp.json()
         if "error" in data:
             exc = parse_vk_error(data["error"] or {})
             if self._limiter and exc.is_flood:
@@ -233,3 +261,26 @@ class VKClient:
 
     async def video_save(self, name: str = "", description: str = "") -> dict:
         return await self.call("video.save", name=name or None, description=description or None)
+
+
+async def open_validated_client(
+    token: str,
+    session: aiohttp.ClientSession,
+    limiter: Optional[VKFloodController] = None,
+) -> tuple[VKClient, list[dict]]:
+    """Проверить токен: сначала обычный api.vk.com, затем Bearer на api.vk.ru."""
+    last: Optional[VKAPIError] = None
+    for use_bearer in (False, True):
+        client = VKClient(token, session, limiter=limiter, use_bearer=use_bearer)
+        try:
+            users = await client.users_get()
+            await client.messages_get_long_poll_server()
+            logger.info("Token ok bearer=%s app_id=%s", use_bearer, client.vk_app_id)
+            return client, list(users or [])
+        except VKAPIError as e:
+            last = e
+            if e.is_flood:
+                raise
+            logger.info("Token probe bearer=%s failed: %s", use_bearer, e)
+    assert last is not None
+    raise last

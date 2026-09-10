@@ -489,13 +489,13 @@ async def _validated_session(
     app_id: int,
     limiter: Optional[VKFloodController],
 ) -> WebSession:
-    client = VKClient(access_token, http, limiter=limiter)
-    users = await client.users_get()
-    await client.messages_get_long_poll_server()
+    from vk.client import open_validated_client
+
+    client, users = await open_validated_client(access_token, http, limiter)
     return WebSession(
         access_token=access_token,
         cookies=slim_session_cookies(cookies),
         expires_at=expires_at,
-        app_id=app_id,
-        users=list(users or []),
+        app_id=client.vk_app_id or app_id,
+        users=users,
     )
