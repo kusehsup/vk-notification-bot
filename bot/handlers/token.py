@@ -6,7 +6,7 @@ from aiogram import Router, F
 from aiogram.enums import ParseMode
 from aiogram.types import Message
 
-from bot.handlers.token_parse import extract_token
+from bot.handlers.token_parse import extract_explicit_token, extract_token
 from bot.oauth import auth_keyboard
 from core.manager import WorkerManager
 from storage.db import Database
@@ -38,9 +38,20 @@ FLOOD_TEXT = (
 
 COOKIE_BAD_TEXT = (
     "Не похоже на сессию vk.com.\n\n"
-    "Нужен заголовок <code>Cookie</code> с <code>remixsid=</code> "
-    "(F12 → Network на vk.com) — текстом или .txt файлом.\n"
-    "Старые кнопки VK Admin / Android больше не работают."
+    "Пришли одну строку <code>remixsid=...</code> "
+    "(F12 → Application → Cookies → vk.ru → remixsid → Value).\n"
+    "Весь заголовок Cookie из Network лучше не слать: Telegram его режет."
+)
+
+COOKIE_REJECTED_TEXT = (
+    "❌ VK не принял <code>remixsid</code>.\n\n"
+    "Не копируй весь заголовок Cookie из Network — он слишком длинный, "
+    "и <code>remixsid</code> часто обрезается.\n\n"
+    "Сделай так:\n"
+    "1. F12 → вкладка <b>Application</b> (Приложение) → Cookies → <code>https://vk.ru</code>\n"
+    "2. Найди cookie <code>remixsid</code>, скопируй <b>Value</b>\n"
+    "3. Пришли мне одной строкой: <code>remixsid=значение</code>\n\n"
+    "Если копируешь из Network — только пару <code>remixsid=...</code>, не весь Cookie."
 )
 
 
@@ -65,7 +76,18 @@ async def _payload_text(message: Message) -> str:
 async def receive_session(message: Message, db: Database, manager: WorkerManager) -> None:
     raw = await _payload_text(message)
     cookies = parse_cookie_blob(raw)
-    token = extract_token(raw) if not cookies else None
+    token = extract_explicit_token(raw) if cookies else extract_token(raw)
+    sid = (cookies or {}).get("remixsid") or ""
+
+    if len(raw) >= 3900 and not message.document and len(sid) < 50:
+        await message.answer(
+            "Это похоже на весь заголовок Cookie — Telegram обрезает такие сообщения.\n"
+            "Пришли только <code>remixsid=значение</code> "
+            "(F12 → Application → Cookies → remixsid).",
+            reply_markup=auth_keyboard(),
+            parse_mode=ParseMode.HTML,
+        )
+        return
 
     if not cookies and not token:
         await message.answer(
@@ -105,8 +127,7 @@ async def _connect_cookies(
             )
         except WebTokenUnauthorized:
             await status.edit_text(
-                "❌ Cookie не принят (сессия истекла или это не remixsid с vk.com).\n\n"
-                "Открой vk.com заново, скопируй Cookie из Network и пришли ещё раз.",
+                COOKIE_REJECTED_TEXT,
                 reply_markup=auth_keyboard(),
                 parse_mode=ParseMode.HTML,
                 disable_web_page_preview=True,

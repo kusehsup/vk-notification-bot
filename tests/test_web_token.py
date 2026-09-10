@@ -71,6 +71,28 @@ def test_fetch_web_token_ok() -> None:
     asyncio.run(run())
 
 
+def test_fetch_web_token_retries_second_host() -> None:
+    def handler(url: str, kwargs: dict[str, Any]) -> FakeResponse:
+        if "login.vk.ru" in url:
+            return FakeResponse({"type": "error", "error_info": "unauthorized"})
+        return FakeResponse(
+            {
+                "type": "okay",
+                "data": {"access_token": "vk1.a.from-com", "user_id": 1, "expires": 1_900_000_000},
+            }
+        )
+
+    session = FakeSession(handler)
+
+    async def run() -> None:
+        result = await fetch_web_token(session, {"remixsid": "sid"})  # type: ignore[arg-type]
+        assert result.access_token == "vk1.a.from-com"
+
+    asyncio.run(run())
+    assert any("login.vk.ru" in url for url, _ in session.calls)
+    assert any("login.vk.com" in url for url, _ in session.calls)
+
+
 def test_fetch_web_token_unauthorized() -> None:
     def handler(url: str, kwargs: dict[str, Any]) -> FakeResponse:
         return FakeResponse({"type": "error", "error_info": "unauthorized"})

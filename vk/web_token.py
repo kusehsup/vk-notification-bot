@@ -33,19 +33,29 @@ WEB_APP_CANDIDATES: tuple[int, ...] = (
     4083558,  # VFeed
 )
 
+# Сначала vk.ru — сайт давно редиректит туда, remixsid с vk.ru не принимается login.vk.com.
 WEB_TOKEN_ENDPOINTS: tuple[tuple[str, str, str], ...] = (
-    ("https://login.vk.com/?act=web_token", "https://vk.com", "https://vk.com/"),
     ("https://login.vk.ru/?act=web_token", "https://vk.ru", "https://vk.ru/"),
+    ("https://login.vk.com/?act=web_token", "https://vk.com", "https://vk.com/"),
 )
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
+
+# Остальное (remixhttphash и т.п.) огромное, Telegram режет, а перевод строки в значении
+# ломает заголовок Cookie — login.vk.com тогда отвечает unauthorized.
+SESSION_COOKIE_NAMES = {"remixsid", "remixnsid", "p", "remixstid", "remixstlid", "remixlhk"}
 
 NO_MESSAGES_CODES = {7, 15, 20, 21, 27, 28}
 
 _REMIXSID_RE = re.compile(r"remixsid", re.IGNORECASE)
+_REMIXSID_VALUE_RE = re.compile(
+    r"(?:^|[;\s])remixsid\d*\s*[=:]\s*([A-Za-z0-9_\-]+(?:\s+[A-Za-z0-9_\-]+)*)",
+    re.IGNORECASE,
+)
+_BARE_SID_RE = re.compile(r"^[A-Za-z0-9_\-]{40,240}$")
 _CURL_COOKIE_RE = re.compile(
     r"""(?:^|[\s'"\\])(?:[Cc]ookie):\s*([^\n"'\\]+)""",
 )
@@ -84,6 +94,18 @@ def cookies_to_header(cookies: dict[str, str]) -> str:
     return "; ".join(f"{k}={v}" for k, v in cookies.items() if k and v)
 
 
+def slim_session_cookies(cookies: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for key, value in cookies.items():
+        name = key.strip()
+        clean = re.sub(r"\s+", "", value or "")
+        if not name or not clean:
+            continue
+        if name.lower().startswith("remixsid") or name.lower() in SESSION_COOKIE_NAMES:
+            out[name] = clean
+    return out
+
+
 def parse_cookie_header(cookie_header: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for part in cookie_header.split(";"):
@@ -94,49 +116,67 @@ def parse_cookie_header(cookie_header: str) -> dict[str, str]:
         name = k.strip()
         if not name:
             continue
-        out[name] = v.strip()
+        out[name] = re.sub(r"\s+", "", v.strip())
     return out
 
 
+def extract_remixsid_value(text: str) -> Optional[str]:
+    m = _REMIXSID_VALUE_RE.search(text)
+    if m:
+        return re.sub(r"\s+", "", m.group(1))
+    stripped = text.strip()
+    if stripped.lower().startswith("remixsid="):
+        stripped = stripped.split("=", 1)[1].strip()
+    if _BARE_SID_RE.fullmatch(stripped) and not stripped.lower().startswith("vk1."):
+        return stripped
+    return None
+
+
 def looks_like_cookies(text: str) -> bool:
-    return bool(text and _REMIXSID_RE.search(text))
+    return bool(text and (_REMIXSID_RE.search(text) or extract_remixsid_value(text)))
 
 
 def parse_cookie_blob(text: str) -> Optional[dict[str, str]]:
-    """Разобрать Cookie header, JSON, Netscape dump или curl -H 'Cookie: ...'."""
+    """Разобрать Cookie header, JSON, Netscape dump, curl или одно remixsid=..."""
     if not text or not text.strip():
         return None
     raw = text.strip()
     if raw.startswith("\ufeff"):
         raw = raw.lstrip("\ufeff")
 
+    parsed: dict[str, str] = {}
+
     curl = _CURL_COOKIE_RE.search(raw)
     if curl:
-        parsed = parse_cookie_header(curl.group(1).strip().strip("'").strip('"'))
-        if _has_remixsid(parsed):
-            return parsed
+        parsed.update(parse_cookie_header(curl.group(1).strip().strip("'").strip('"')))
 
     if raw[:1] in "{[":
-        parsed = _parse_cookie_json(raw)
-        if parsed and _has_remixsid(parsed):
-            return parsed
+        parsed.update(_parse_cookie_json(raw) or {})
 
     if "\t" in raw and _looks_like_netscape(raw):
-        parsed = _parse_netscape(raw)
-        if parsed and _has_remixsid(parsed):
-            return parsed
+        parsed.update(_parse_netscape(raw))
 
-    parsed = _parse_devtool_table(raw)
-    if parsed and _has_remixsid(parsed):
-        return parsed
+    parsed.update(_parse_devtool_table(raw))
 
-    # Обычный заголовок Cookie: remixsid=...; p=...
     header = raw
-    if header.lower().startswith("cookie:"):
-        header = header.split(":", 1)[1].strip()
-    parsed = parse_cookie_header(header)
-    if parsed and _has_remixsid(parsed):
-        return parsed
+    lower = header.lower()
+    if "cookie:" in lower:
+        # весь дамп заголовков: берём всё после Cookie:, склеивая переносы
+        idx = lower.find("cookie:")
+        rest = header[idx + len("cookie:") :]
+        stop = re.search(r"\n[A-Za-z-]{2,40}:", rest)
+        blob = rest[: stop.start()] if stop else rest
+        parsed.update(parse_cookie_header(blob.replace("\n", " ")))
+    else:
+        parsed.update(parse_cookie_header(header.replace("\n", " ")))
+
+    sid = extract_remixsid_value(raw)
+    if sid:
+        parsed["remixsid"] = sid
+
+    slimmed = slim_session_cookies(parsed)
+    if _has_remixsid(slimmed):
+        return slimmed
     return None
 
 
@@ -260,63 +300,83 @@ async def fetch_web_token(
     access_token: Optional[str] = None,
 ) -> WebTokenResult:
     """POST login.vk.com/?act=web_token. Токен живёт ~24 минуты."""
+    cookies = slim_session_cookies(cookies)
     if not _has_remixsid(cookies):
         raise WebTokenError("В cookies нет remixsid — это не сессия vk.com")
 
+    token_opts: list[Optional[str]] = [None]
+    if access_token:
+        token_opts.append(access_token)
+
     last_err: Optional[Exception] = None
+    saw_unauthorized = False
     for url, origin, referer in WEB_TOKEN_ENDPOINTS:
-        headers = {
-            "Origin": origin,
-            "Referer": referer,
-            "User-Agent": DEFAULT_UA,
-            "Cookie": cookies_to_header(cookies),
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        data: dict[str, str] = {
-            "version": "1",
-            "app_id": str(app_id),
-        }
-        if access_token:
-            data["access_token"] = access_token
-        try:
-            async with http.post(
-                url,
-                data=data,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                body = await resp.json(content_type=None)
-                merged = _merge_response_cookies(cookies, resp)
-        except Exception as e:
-            last_err = e
-            logger.warning("web_token %s failed: %s", url, e)
-            continue
+        for token in token_opts:
+            headers = {
+                "Origin": origin,
+                "Referer": referer,
+                "User-Agent": DEFAULT_UA,
+                "Cookie": cookies_to_header(cookies),
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            data: dict[str, str] = {
+                "version": "1",
+                "app_id": str(app_id),
+            }
+            if token:
+                data["access_token"] = token
+            try:
+                async with http.post(
+                    url,
+                    data=data,
+                    headers=headers,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    body = await resp.json(content_type=None)
+                    merged = _merge_response_cookies(cookies, resp)
+            except Exception as e:
+                last_err = e
+                logger.warning("web_token %s failed: %s", url, e)
+                continue
 
-        if body.get("type") != "okay":
-            info = body.get("error_info") or body.get("error_msg") or body
-            if _is_unauthorized(info):
-                raise WebTokenUnauthorized(f"web_token: {info}")
-            last_err = WebTokenError(f"web_token failed: {info}")
-            continue
+            if body.get("type") != "okay":
+                info = body.get("error_info") or body.get("error_msg") or body
+                logger.info(
+                    "web_token %s origin=%s app_id=%s -> %s (sid_len=%s keys=%s)",
+                    url,
+                    origin,
+                    app_id,
+                    info,
+                    len(next((v for k, v in cookies.items() if k.lower().startswith("remixsid")), "")),
+                    ",".join(sorted(cookies)),
+                )
+                if _is_unauthorized(info):
+                    saw_unauthorized = True
+                    last_err = WebTokenUnauthorized(f"web_token: {info}")
+                    continue
+                last_err = WebTokenError(f"web_token failed: {info}")
+                continue
 
-        payload = body.get("data") or {}
-        token = payload.get("access_token")
-        if not token:
-            last_err = WebTokenError(f"web_token: нет access_token ({body})")
-            continue
-        user_id = 0
-        try:
-            user_id = int(payload.get("user_id") or 0)
-        except (TypeError, ValueError):
+            payload = body.get("data") or {}
+            token_value = payload.get("access_token")
+            if not token_value:
+                last_err = WebTokenError(f"web_token: нет access_token ({body})")
+                continue
             user_id = 0
-        return WebTokenResult(
-            access_token=str(token),
-            cookies=merged,
-            expires_at=_parse_expires(payload),
-            app_id=app_id,
-            user_id=user_id,
-        )
+            try:
+                user_id = int(payload.get("user_id") or 0)
+            except (TypeError, ValueError):
+                user_id = 0
+            return WebTokenResult(
+                access_token=str(token_value),
+                cookies=slim_session_cookies(merged),
+                expires_at=_parse_expires(payload),
+                app_id=app_id,
+                user_id=user_id,
+            )
 
+    if saw_unauthorized:
+        raise WebTokenUnauthorized(str(last_err) if last_err else "web_token: unauthorized")
     if isinstance(last_err, WebTokenError):
         raise last_err
     raise WebTokenError(f"web_token недоступен: {last_err}")
@@ -330,42 +390,68 @@ async def exchange_cookies_for_api(
 ) -> WebSession:
     """Получить токен, у которого работают users.get и messages.getLongPollServer."""
     last_err: Optional[Exception] = None
-    merged = dict(cookies)
+    merged = slim_session_cookies(cookies)
     token_hint = extra_token
     for app_id in WEB_APP_CANDIDATES:
         try:
             result = await fetch_web_token(http, merged, app_id, token_hint)
-        except WebTokenUnauthorized:
-            raise
+        except WebTokenUnauthorized as e:
+            last_err = e
+            logger.info("web_token app_id=%s unauthorized — remixsid rejected", app_id)
+            break
         except WebTokenError as e:
             logger.info("web_token app_id=%s: %s", app_id, e)
             last_err = e
             continue
         merged.update(result.cookies)
         token_hint = result.access_token
-        client = VKClient(result.access_token, http, limiter=limiter)
         try:
-            users = await client.users_get()
-            await client.messages_get_long_poll_server()
+            return await _validated_session(
+                http, result.access_token, merged, result.expires_at, app_id, limiter
+            )
         except VKAPIError as e:
             last_err = e
             if e.is_flood:
                 raise
-            logger.info(
-                "app_id=%s token rejected by API: %s",
-                app_id,
-                e,
-            )
-            if e.is_auth or e.code in NO_MESSAGES_CODES:
-                continue
+            logger.info("app_id=%s token rejected by API: %s", app_id, e)
             continue
-        return WebSession(
-            access_token=result.access_token,
-            cookies=merged,
-            expires_at=result.expires_at,
-            app_id=app_id,
-            users=list(users or []),
-        )
+
+    if extra_token:
+        try:
+            return await _validated_session(
+                http,
+                extra_token,
+                merged,
+                int(time.time()) + 20 * 60,
+                DEFAULT_WEB_APP_ID,
+                limiter,
+            )
+        except VKAPIError as e:
+            last_err = e
+            logger.info("Bearer/access_token fallback failed: %s", e)
+
+    if isinstance(last_err, WebTokenUnauthorized):
+        raise last_err
     if last_err:
         raise last_err
     raise WebTokenError("Не удалось получить токен с доступом к сообщениям ВК")
+
+
+async def _validated_session(
+    http: aiohttp.ClientSession,
+    access_token: str,
+    cookies: dict[str, str],
+    expires_at: int,
+    app_id: int,
+    limiter: Optional[VKFloodController],
+) -> WebSession:
+    client = VKClient(access_token, http, limiter=limiter)
+    users = await client.users_get()
+    await client.messages_get_long_poll_server()
+    return WebSession(
+        access_token=access_token,
+        cookies=slim_session_cookies(cookies),
+        expires_at=expires_at,
+        app_id=app_id,
+        users=list(users or []),
+    )

@@ -68,3 +68,34 @@ def test_parse_cookie_netscape() -> None:
 def test_parse_cookie_rejects_random_text() -> None:
     assert parse_cookie_blob("hello world") is None
     assert not looks_like_cookies("access_token=vk1.a.xxx")
+
+
+def test_parse_wrapped_remixsid() -> None:
+    raw = (
+        "Cookie: remixlang=0; remixhttphash=vk1.a.AAAA\n"
+        "BBBBCCCC; remixsid=1_abcDEF-ghi_jklmnopqrstuvwxyz0123456789ABCD\n"
+        "Origin: https://vk.ru"
+    )
+    parsed = parse_cookie_blob(raw)
+    assert parsed is not None
+    assert parsed["remixsid"].startswith("1_abcDEF")
+    assert "remixhttphash" not in parsed
+
+
+def test_parse_bare_remixsid_value() -> None:
+    sid = "1_CfljRp89_FhhCpAFlkT_F2v-Uvn5mihvOzuTipken3q3HRFC7dluiQGkQ3vAvO98f4NDd"
+    parsed = parse_cookie_blob(sid)
+    assert parsed == {"remixsid": sid}
+
+
+def test_extract_bearer_not_httphash() -> None:
+    from bot.handlers.token_parse import extract_explicit_token
+
+    dump = (
+        "Authorization: Bearer vk1.a.REALTOKEN\n"
+        "Cookie: remixhttphash=vk1.a.HASHHASH; remixsid=1_abc"
+    )
+    assert extract_explicit_token(dump) == "vk1.a.REALTOKEN"
+    parsed = parse_cookie_blob(dump)
+    assert parsed is not None
+    assert parsed["remixsid"] == "1_abc"
